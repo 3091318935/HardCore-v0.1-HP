@@ -6,6 +6,7 @@
     换肤 / 壁纸 / 光影 / 音乐 / 翻译 一概没有，原脚本的界面、逻辑、回调一行都不动。
 
     手势：拖标题栏 = 挪位置；点标题栏 = 折叠 / 展开
+          标题上方那条「− 〇 大小 100% ＋」= 调整个 HUD 的大小（点 −/＋、拖滑条、点百分比重置 100%）
     刷新：默认 0.25s；只读 Humanoid.Health / MaxHealth，不写任何游戏状态
 --]]
 
@@ -20,8 +21,10 @@ local CONFIG = {
 	aliveOnly = false,  -- true = 只列活人
 	sortByHp  = false,  -- true = 按血量降序
 
-	width     = 320,    -- 面板宽度（210 → 320）
-	fontSize  = 15,     -- 主体字号（10 → 15）；行高、血条、标题栏都按它推
+	width     = 320,    -- 字号 = fontSize 时的面板宽度；调大小按比例走
+	fontSize  = 15,     -- 默认字号（10 → 15）；行高、血条、标题栏、内边距全部按它推
+	sizeMin   = 10,     -- 「大小」调节下限（字号）
+	sizeMax   = 26,     -- 「大小」调节上限（字号）
 	topX      = 16,     -- 距右边缘
 	topY      = 96,     -- 距顶部
 	scale     = 1,      -- 整体再缩放 0.8 ~ 1.4
@@ -131,16 +134,33 @@ local FONT_BODY = Enum.Font.Gotham
 local FONT_BOLD = Enum.Font.GothamSemibold
 
 --=====================================================================
---  尺寸：全部按 CONFIG.fontSize 推出来，改一个数字整块跟着变
+--  尺寸表：全部由「字号」推出来 —— 改大小 = 换一个字号 + 重算这张表
 --=====================================================================
-local FS      = math.max(10, round(CONFIG.fontSize or 15))
-local NAME_H  = round(FS * 1.20)               -- 名字 / 数字那一行的高度
-local ROW_PAD = math.max(4, round(FS * 0.38))  -- 行内上下留白
-local BAR_H   = math.max(5, round(FS * 0.42))  -- 血条厚度
-local ROW_H   = ROW_PAD * 2 + NAME_H + BAR_H   -- 每行总高
-local HEAD_H  = round(FS * 2.05)               -- 标题栏高
-local SIDE    = math.max(10, round(FS * 0.80)) -- 左右内边距
-local HP_W    = round(FS * 7.6)                -- 右侧「87 / 100」宽度
+local SIZE_MIN = math.max(8, round(CONFIG.sizeMin or 10))
+local SIZE_MAX = math.max(SIZE_MIN + 2, round(CONFIG.sizeMax or 26))
+local BASE_FS  = math.max(8, round(CONFIG.fontSize or 15))
+
+local function measure(fs)
+	local f      = clamp(round(fs), SIZE_MIN, SIZE_MAX)
+	local nameH  = round(f * 1.20)                 -- 名字 / 数字那一行的行高
+	local rowPad = math.max(4, round(f * 0.38))    -- 行内上下留白
+	local barH   = math.max(5, round(f * 0.42))    -- 血条厚度
+	return {
+		fs      = f,
+		nameH   = nameH,
+		rowPad  = rowPad,
+		barH    = barH,
+		rowH    = rowPad * 2 + nameH + barH,         -- 每行总高
+		headH   = round(f * 2.05),                   -- 标题栏 / 调节条高度基准
+		side    = math.max(10, round(f * 0.80)),     -- 左右内边距
+		hpW     = round(f * 7.6),                    -- 右侧「87 / 100」宽度
+		gap     = math.max(4, round(f * 0.35)),      -- 行与行间距
+		radius  = math.max(4, round(f * 0.67)),      -- 圆角
+		width   = math.max(240, round((CONFIG.width or 320) * f / BASE_FS)),
+	}
+end
+
+local M = measure(BASE_FS)
 
 local function hpColor(r)
 	if r <= 0 then return HP_DEAD end
@@ -149,34 +169,41 @@ local function hpColor(r)
 	return HP_GREEN
 end
 
+local function pct(fs)
+	return math.floor(fs / BASE_FS * 100 + 0.5)
+end
+
 --=====================================================================
 --  全员血量 HUD
 --=====================================================================
 local HPHud = {
-	gui = nil, root = nil, header = nil, title = nil,
+	gui = nil, root = nil, header = nil, title = nil, bar = nil,
 	rows = {}, count = 0, running = false, collapsed = false,
 	posX = nil, posY = nil,
 }
 
+-- 大小调节条的拖拽状态（模块级的 UIS 连接只建一次，重建 GUI 时不重复挂）
+local sizeDrag = { on = false, fs = nil, track = nil, fill = nil, label = nil }
+
 local function hpRow(i)
 	local frame = make("Frame", {
 		Name = "R" .. i,
-		Size = UDim2.new(1, 0, 0, ROW_H),
+		Size = UDim2.new(1, 0, 0, M.rowH),
 		BackgroundColor3 = C_BG,
 		BackgroundTransparency = 0.42,
 		BorderSizePixel = 0,
 		LayoutOrder = i,
 		Visible = false,
 	})
-	make("UICorner", { CornerRadius = UDim.new(0, 10), Parent = frame })
+	make("UICorner", { CornerRadius = UDim.new(0, M.radius), Parent = frame })
 
 	local name = make("TextLabel", {
 		Text = "",
-		Size = UDim2.new(1, -(SIDE * 2 + HP_W), 0, NAME_H),
-		Position = UDim2.new(0, SIDE, 0, ROW_PAD),
+		Size = UDim2.new(1, -(M.side * 2 + M.hpW), 0, M.nameH),
+		Position = UDim2.new(0, M.side, 0, M.rowPad),
 		BackgroundTransparency = 1,
 		Font = FONT_BOLD,
-		TextSize = FS,
+		TextSize = M.fs,
 		TextColor3 = C_TEXT,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
@@ -184,11 +211,11 @@ local function hpRow(i)
 	})
 	local hp = make("TextLabel", {
 		Text = "",
-		Size = UDim2.new(0, HP_W, 0, NAME_H),
-		Position = UDim2.new(1, -(SIDE + HP_W), 0, ROW_PAD),
+		Size = UDim2.new(0, M.hpW, 0, M.nameH),
+		Position = UDim2.new(1, -(M.side + M.hpW), 0, M.rowPad),
 		BackgroundTransparency = 1,
 		Font = FONT_BOLD,
-		TextSize = FS,
+		TextSize = M.fs,
 		TextColor3 = C_TEXT,
 		TextXAlignment = Enum.TextXAlignment.Right,
 		Parent = frame,
@@ -196,8 +223,8 @@ local function hpRow(i)
 
 	local track = make("Frame", {
 		Name = "Track",
-		Size = UDim2.new(1, -(SIDE * 2), 0, BAR_H),
-		Position = UDim2.new(0, SIDE, 0, ROW_PAD + NAME_H),
+		Size = UDim2.new(1, -(M.side * 2), 0, M.barH),
+		Position = UDim2.new(0, M.side, 0, M.rowPad + M.nameH),
 		BackgroundColor3 = Color3.new(1, 1, 1),
 		BackgroundTransparency = 0.86,
 		BorderSizePixel = 0,
@@ -221,9 +248,68 @@ local function saveState()
 	writeCfg({
 		x = HPHud.posX or CONFIG.topX,
 		y = HPHud.posY or CONFIG.topY,
+		fs = M.fs,
 		collapsed = HPHud.collapsed and true or false,
 	})
 end
+
+-- 改大小：换字号 → 重算尺寸表 → 拆掉旧 GUI，下一帧按新尺寸重画
+local function applySize(fs, noSave)
+	local f = clamp(round(fs), SIZE_MIN, SIZE_MAX)
+	if f == M.fs then return end
+	M = measure(f)
+
+	sizeDrag.on, sizeDrag.track, sizeDrag.fill, sizeDrag.label = false, nil, nil, nil
+	if HPHud.gui then pcall(function() HPHud.gui:Destroy() end) end
+	HPHud.gui, HPHud.root, HPHud.header, HPHud.title, HPHud.bar = nil, nil, nil, nil, nil
+	HPHud.rows = {}
+
+	if not noSave then saveState() end
+	if lp() then pcall(HPHud.ensure) end
+	if HPHud.update then pcall(HPHud.update) end
+end
+
+HPHud.setSize = applySize
+
+--=====================================================================
+--  调节条的拖拽（滑条）
+--=====================================================================
+local function sizeFromX(x)
+	local track = sizeDrag.track
+	if not (track and track.Parent) then return nil end
+	local w = track.AbsoluteSize.X
+	if not w or w <= 0 then return nil end
+	local t = clamp((x - track.AbsolutePosition.X) / w, 0, 1)
+	return SIZE_MIN + t * (SIZE_MAX - SIZE_MIN)
+end
+
+local function sizePreview(fs)
+	local f = clamp(round(fs), SIZE_MIN, SIZE_MAX)
+	sizeDrag.fs = f
+	if sizeDrag.fill then
+		sizeDrag.fill.Size = UDim2.new((f - SIZE_MIN) / math.max(1, SIZE_MAX - SIZE_MIN), 0, 1, 0)
+	end
+	if sizeDrag.label then
+		sizeDrag.label.Text = string.format("大小 %d%%", pct(f))
+	end
+end
+
+UIS.InputChanged:Connect(function(input)
+	if not sizeDrag.on then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement
+		and input.UserInputType ~= Enum.UserInputType.Touch then return end
+	local v = sizeFromX(input.Position.X)
+	if v then sizePreview(v) end
+end)
+
+UIS.InputEnded:Connect(function(input)
+	if not sizeDrag.on then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1
+		and input.UserInputType ~= Enum.UserInputType.Touch then return end
+	sizeDrag.on = false
+	local v = sizeFromX(input.Position.X) or sizeDrag.fs
+	if v then applySize(v) end
+end)
 
 function HPHud.ensure()
 	if HPHud.gui and HPHud.gui.Parent then return HPHud.gui end
@@ -246,13 +332,13 @@ function HPHud.ensure()
 		Name = "Root",
 		AnchorPoint = Vector2.new(1, 0),
 		Position = UDim2.new(1, -(HPHud.posX or CONFIG.topX), 0, HPHud.posY or CONFIG.topY),
-		Size = UDim2.new(0, CONFIG.width, 0, HEAD_H),
+		Size = UDim2.new(0, M.width, 0, M.headH),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
 		Parent = gui,
 	})
 	make("UIListLayout", {
-		Padding = UDim.new(0, math.max(4, round(FS * 0.35))),
+		Padding = UDim.new(0, M.gap),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		Parent = root,
 	})
@@ -261,26 +347,133 @@ function HPHud.ensure()
 	end
 	HPHud.root = root
 
+	--=============================================================
+	--  大小调节条（在「全员血量」标题上面一行）
+	--  LayoutOrder = -1 → 永远排在最上面
+	--=============================================================
+	local barH  = clamp(round(M.fs * 1.75), 26, 40)
+	local btn   = clamp(round(barH * 0.85), 20, 32)
+	local lbW   = clamp(round(M.fs * 5.6), 72, 104)
+	local lbTS  = clamp(round(M.fs * 0.72), 12, 17)
+
+	local bar = make("Frame", {
+		Name = "SizeBar",
+		Size = UDim2.new(1, 0, 0, barH),
+		BackgroundColor3 = C_BG,
+		BackgroundTransparency = 0.30,
+		BorderSizePixel = 0,
+		LayoutOrder = -1,
+		Parent = root,
+	})
+	make("UICorner", { CornerRadius = UDim.new(0, M.radius), Parent = bar })
+	make("UIStroke", { Color = C_LINE, Thickness = 1, Transparency = 0.55, Parent = bar })
+	HPHud.bar = bar
+
+	local function stepBtn(text, rightSide)
+		local b = make("TextButton", {
+			Text = text,
+			Size = UDim2.new(0, btn, 0, btn),
+			Position = rightSide and UDim2.new(1, -6, 0.5, 0) or UDim2.new(0, 6, 0.5, 0),
+			AnchorPoint = rightSide and Vector2.new(1, 0.5) or Vector2.new(0, 0.5),
+			AutoButtonColor = true,
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BackgroundTransparency = 0.86,
+			BorderSizePixel = 0,
+			Font = FONT_BOLD,
+			TextSize = clamp(round(btn * 0.80), 13, 22),
+			TextColor3 = C_TEXT,
+			Parent = bar,
+		})
+		make("UICorner", { CornerRadius = UDim.new(0, 6), Parent = b })
+		return b
+	end
+
+	local minus = stepBtn("−", false)
+	local plus  = stepBtn("+", true)
+	if minus then
+		minus.Activated:Connect(function() applySize(M.fs - 1) end)
+	end
+	if plus then
+		plus.Activated:Connect(function() applySize(M.fs + 1) end)
+	end
+
+	-- 滑条
+	local sTrack = make("Frame", {
+		Name = "SizeTrack",
+		Size = UDim2.new(1, -(2 * btn + lbW + 28), 0, 8),
+		Position = UDim2.new(0, btn + 12, 0.5, 0),
+		AnchorPoint = Vector2.new(0, 0.5),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 0.86,
+		BorderSizePixel = 0,
+		Parent = bar,
+	})
+	make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = sTrack })
+	local sFill = make("Frame", {
+		Name = "Fill",
+		Size = UDim2.new((M.fs - SIZE_MIN) / math.max(1, SIZE_MAX - SIZE_MIN), 0, 1, 0),
+		BackgroundColor3 = HP_GREEN,
+		BorderSizePixel = 0,
+		Parent = sTrack,
+	})
+	make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = sFill })
+
+	-- 百分比（点一下回到 100%）
+	local sLabel = make("TextButton", {
+		Name = "SizeLabel",
+		Text = string.format("大小 %d%%", pct(M.fs)),
+		Size = UDim2.new(0, lbW, 1, 0),
+		Position = UDim2.new(1, -(btn + 10), 0.5, 0),
+		AnchorPoint = Vector2.new(1, 0.5),
+		AutoButtonColor = false,
+		BackgroundTransparency = 1,
+		Font = FONT_BOLD,
+		TextSize = lbTS,
+		TextColor3 = C_DIM,
+		Parent = bar,
+	})
+	if sLabel then
+		sLabel.Activated:Connect(function() applySize(BASE_FS) end)
+	end
+
+	-- 拖拽只改预览（fill + 百分比），松手才真正重建，避免拖到一半控件被销毁
+	sizeDrag.track, sizeDrag.fill, sizeDrag.label = sTrack, sFill, sLabel
+	sizeDrag.fs, sizeDrag.on = M.fs, false
+
+	local function bindTrack(obj)
+		if not obj then return end
+		obj.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch then
+				sizeDrag.on = true
+				local v = sizeFromX(input.Position.X)
+				if v then sizePreview(v) end
+			end
+		end)
+	end
+	bindTrack(sTrack)
+	bindTrack(sFill)
+
 	local header = make("Frame", {
 		Name = "Header",
-		Size = UDim2.new(1, 0, 0, HEAD_H),
+		Size = UDim2.new(1, 0, 0, M.headH),
 		BackgroundColor3 = C_BG,
 		BackgroundTransparency = 0.28,
 		BorderSizePixel = 0,
 		LayoutOrder = 0,
 		Parent = root,
 	})
-	make("UICorner", { CornerRadius = UDim.new(0, 11), Parent = header })
+	make("UICorner", { CornerRadius = UDim.new(0, M.radius + 1), Parent = header })
 	make("UIStroke", { Color = C_LINE, Thickness = 1.5, Transparency = 0.45, Parent = header })
 	HPHud.header = header
 
 	HPHud.title = make("TextLabel", {
 		Text = "全员血量",
-		Size = UDim2.new(1, -(SIDE * 2), 1, 0),
-		Position = UDim2.new(0, SIDE, 0, 0),
+		Size = UDim2.new(1, -(M.side * 2), 1, 0),
+		Position = UDim2.new(0, M.side, 0, 0),
 		BackgroundTransparency = 1,
 		Font = FONT_BOLD,
-		TextSize = FS,
+		TextSize = M.fs,
 		TextColor3 = C_TEXT,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = header,
@@ -317,7 +510,7 @@ function HPHud.ensure()
 		if not dragStart then return end
 		dragStart = nil
 		local abs, size = root.AbsolutePosition, gui.AbsoluteSize
-		HPHud.posX = math.max(0, round((size.X or 1280) - (abs.X + (root.AbsoluteSize.X or CONFIG.width))))
+		HPHud.posX = math.max(0, round((size.X or 1280) - (abs.X + (root.AbsoluteSize.X or M.width))))
 		HPHud.posY = math.max(0, round(abs.Y))
 		if not moved then
 			HPHud.collapsed = not HPHud.collapsed
@@ -376,6 +569,7 @@ function HPHud.update()
 	end
 
 	HPHud.count = #data
+	if HPHud.bar then HPHud.bar.Visible = not HPHud.collapsed end
 	if HPHud.title then
 		HPHud.title.Text = string.format("全员血量 · %d 人%s", #data, HPHud.collapsed and "  ▸" or "")
 	end
@@ -388,6 +582,7 @@ function HPHud.update()
 		end
 		if r.frame.Parent ~= HPHud.root then r.frame.Parent = HPHud.root end
 		r.frame.Visible = (not HPHud.collapsed)
+		r.frame.Size = UDim2.new(1, 0, 0, M.rowH)
 		r.frame.LayoutOrder = i
 		r.frame.BackgroundColor3 = C_BG
 		r.name.TextColor3 = d.me and HP_GREEN or C_TEXT
@@ -441,8 +636,13 @@ function HPHud.destroy()
 	pcall(function()
 		if HPHud.gui then HPHud.gui:Destroy() end
 	end)
-	HPHud.gui, HPHud.root, HPHud.header, HPHud.title = nil, nil, nil, nil
+	HPHud.gui, HPHud.root, HPHud.header, HPHud.title, HPHud.bar = nil, nil, nil, nil, nil
+	sizeDrag.on, sizeDrag.track, sizeDrag.fill, sizeDrag.label = false, nil, nil, nil
 	HPHud.rows = {}
+end
+
+function HPHud.getSize()
+	return M.fs, pct(M.fs)
 end
 
 --=====================================================================
@@ -480,11 +680,15 @@ if cfg then
 	HPHud.posX = tonumber(cfg.x) or HPHud.posX
 	HPHud.posY = tonumber(cfg.y) or HPHud.posY
 	HPHud.collapsed = cfg.collapsed and true or false
+	if tonumber(cfg.fs) then
+		M = measure(tonumber(cfg.fs))
+	end
 end
 
 HPHud.start()
 
-print("[硬核v0.1] 单功能版已启动：全员血量 HUD（拖标题栏挪位置，点一下折叠）")
+print(string.format("[硬核v0.1] 单功能版已启动：全员血量 HUD（当前 %d%%，上方「− 大小 ＋」可调 %d~%d）",
+	pct(M.fs), SIZE_MIN, SIZE_MAX))
 
 if CONFIG.runOriginal then
 	task.spawn(function()
