@@ -20,10 +20,11 @@ local CONFIG = {
 	aliveOnly = false,  -- true = 只列活人
 	sortByHp  = false,  -- true = 按血量降序
 
-	width     = 210,    -- 面板宽度
-	topX      = 14,     -- 距右边缘
-	topY      = 92,     -- 距顶部
-	scale     = 1,      -- 整体缩放 0.8 ~ 1.4
+	width     = 320,    -- 面板宽度（210 → 320）
+	fontSize  = 15,     -- 主体字号（10 → 15）；行高、血条、标题栏都按它推
+	topX      = 16,     -- 距右边缘
+	topY      = 96,     -- 距顶部
+	scale     = 1,      -- 整体再缩放 0.8 ~ 1.4
 
 	cfgFile   = "SG_HP_v01.json",
 }
@@ -129,6 +130,18 @@ local HP_DEAD  = Color3.fromRGB(126, 140, 134)
 local FONT_BODY = Enum.Font.Gotham
 local FONT_BOLD = Enum.Font.GothamSemibold
 
+--=====================================================================
+--  尺寸：全部按 CONFIG.fontSize 推出来，改一个数字整块跟着变
+--=====================================================================
+local FS      = math.max(10, round(CONFIG.fontSize or 15))
+local NAME_H  = round(FS * 1.20)               -- 名字 / 数字那一行的高度
+local ROW_PAD = math.max(4, round(FS * 0.38))  -- 行内上下留白
+local BAR_H   = math.max(5, round(FS * 0.42))  -- 血条厚度
+local ROW_H   = ROW_PAD * 2 + NAME_H + BAR_H   -- 每行总高
+local HEAD_H  = round(FS * 2.05)               -- 标题栏高
+local SIDE    = math.max(10, round(FS * 0.80)) -- 左右内边距
+local HP_W    = round(FS * 7.6)                -- 右侧「87 / 100」宽度
+
 local function hpColor(r)
 	if r <= 0 then return HP_DEAD end
 	if r < 0.3 then return HP_RED end
@@ -148,22 +161,22 @@ local HPHud = {
 local function hpRow(i)
 	local frame = make("Frame", {
 		Name = "R" .. i,
-		Size = UDim2.new(1, 0, 0, 22),
+		Size = UDim2.new(1, 0, 0, ROW_H),
 		BackgroundColor3 = C_BG,
 		BackgroundTransparency = 0.42,
 		BorderSizePixel = 0,
 		LayoutOrder = i,
 		Visible = false,
 	})
-	make("UICorner", { CornerRadius = UDim.new(0, 7), Parent = frame })
+	make("UICorner", { CornerRadius = UDim.new(0, 10), Parent = frame })
 
 	local name = make("TextLabel", {
 		Text = "",
-		Size = UDim2.new(1, -92, 0, 12),
-		Position = UDim2.new(0, 8, 0, 3),
+		Size = UDim2.new(1, -(SIDE * 2 + HP_W), 0, NAME_H),
+		Position = UDim2.new(0, SIDE, 0, ROW_PAD),
 		BackgroundTransparency = 1,
-		Font = FONT_BODY,
-		TextSize = 10,
+		Font = FONT_BOLD,
+		TextSize = FS,
 		TextColor3 = C_TEXT,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
@@ -171,11 +184,11 @@ local function hpRow(i)
 	})
 	local hp = make("TextLabel", {
 		Text = "",
-		Size = UDim2.new(0, 82, 0, 12),
-		Position = UDim2.new(1, -90, 0, 3),
+		Size = UDim2.new(0, HP_W, 0, NAME_H),
+		Position = UDim2.new(1, -(SIDE + HP_W), 0, ROW_PAD),
 		BackgroundTransparency = 1,
-		Font = FONT_BODY,
-		TextSize = 10,
+		Font = FONT_BOLD,
+		TextSize = FS,
 		TextColor3 = C_TEXT,
 		TextXAlignment = Enum.TextXAlignment.Right,
 		Parent = frame,
@@ -183,8 +196,8 @@ local function hpRow(i)
 
 	local track = make("Frame", {
 		Name = "Track",
-		Size = UDim2.new(1, -16, 0, 3),
-		Position = UDim2.new(0, 8, 0, 16),
+		Size = UDim2.new(1, -(SIDE * 2), 0, BAR_H),
+		Position = UDim2.new(0, SIDE, 0, ROW_PAD + NAME_H),
 		BackgroundColor3 = Color3.new(1, 1, 1),
 		BackgroundTransparency = 0.86,
 		BorderSizePixel = 0,
@@ -233,13 +246,13 @@ function HPHud.ensure()
 		Name = "Root",
 		AnchorPoint = Vector2.new(1, 0),
 		Position = UDim2.new(1, -(HPHud.posX or CONFIG.topX), 0, HPHud.posY or CONFIG.topY),
-		Size = UDim2.new(0, CONFIG.width, 0, 26),
+		Size = UDim2.new(0, CONFIG.width, 0, HEAD_H),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
 		Parent = gui,
 	})
 	make("UIListLayout", {
-		Padding = UDim.new(0, 4),
+		Padding = UDim.new(0, math.max(4, round(FS * 0.35))),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		Parent = root,
 	})
@@ -250,24 +263,24 @@ function HPHud.ensure()
 
 	local header = make("Frame", {
 		Name = "Header",
-		Size = UDim2.new(1, 0, 0, 22),
+		Size = UDim2.new(1, 0, 0, HEAD_H),
 		BackgroundColor3 = C_BG,
 		BackgroundTransparency = 0.28,
 		BorderSizePixel = 0,
 		LayoutOrder = 0,
 		Parent = root,
 	})
-	make("UICorner", { CornerRadius = UDim.new(0, 8), Parent = header })
-	make("UIStroke", { Color = C_LINE, Thickness = 1, Transparency = 0.55, Parent = header })
+	make("UICorner", { CornerRadius = UDim.new(0, 11), Parent = header })
+	make("UIStroke", { Color = C_LINE, Thickness = 1.5, Transparency = 0.45, Parent = header })
 	HPHud.header = header
 
 	HPHud.title = make("TextLabel", {
 		Text = "全员血量",
-		Size = UDim2.new(1, -18, 1, 0),
-		Position = UDim2.new(0, 9, 0, 0),
+		Size = UDim2.new(1, -(SIDE * 2), 1, 0),
+		Position = UDim2.new(0, SIDE, 0, 0),
 		BackgroundTransparency = 1,
 		Font = FONT_BOLD,
-		TextSize = 10,
+		TextSize = FS,
 		TextColor3 = C_TEXT,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = header,
